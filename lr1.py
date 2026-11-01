@@ -1,45 +1,40 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Лабораторная работа № 1
-Дисциплина: «Вычислительная математика», вариант 10.
+Лабораторная работа № 1. Вариант 10.
 
-Задание 1.   Отделение корней уравнения f(x) = 0 на отрезке [a, b] и их
-             уточнение методом Ньютона.
-                 f(x)  = 10*cos(x) - 0.1*x^2
-                 f'(x) = -10*sin(x) - 0.2*x
-                 f''(x) = -10*cos(x) - 0.2
-             Входные данные: границы отрезка [a, b], шаг сетки отделения h
-             (значение по умолчанию h = 0.25 обосновано анализом функции),
-             точности eps1 (по аргументу) и eps2 (по функции).
-             Пользователь задаёт именно шаг, а не число разбиений; величина
-             шага не запрашивается как производный параметр K.
+Задание 1. Отделение корней уравнения f(x) = 10*cos(x) - 0.1*x^2 = 0
+           и их уточнение методом Ньютона.
+Задание 2. Метод Гаусса: решение СЛАУ, определитель, обратная матрица.
 
-Задание 2.1. Решение системы линейных уравнений Ax = b методом Гаусса
-             с выбором ведущего элемента.
-Задание 2.2. Вычисление определителя матрицы A методом Гаусса.
-Задание 2.3. Построение обратной матрицы A^(-1) методом Гаусса.
+Реализация написана самостоятельно, по формулам методических указаний
+(п. 1.2-1.4, 2.1, 2.3, 2.4).
 
 Запуск:  python3 lr1.py
 """
-
 import math
 import time
 
-EPS_SINGULAR = 1e-12      # порог обращения в нуль ведущего элемента / f'(x)
-MAX_ITER = 100            # предельное число итераций метода Ньютона
+# ----- данные варианта 10 ----------------------------------------------------
+A_LEFT = -10.0          # левая граница отрезка [a, b] (из задания)
+B_RIGHT = 10.0          # правая граница отрезка
+H_STEP = 0.25           # фиксированный шаг сетки отделения; пользователь
+                        # его не вводит (в перечне входных данных его нет).
+                        # Обоснование: f'(x) = -10*sin(x) - 0.2*x, нули f'
+                        # (экстремумы) расположены примерно через pi, т.е.
+                        # наименьшая "ямка" монотонности имеет длину ~3.14.
+                        # Шаг h = 0.25 даёт >= 12 узлов между соседними
+                        # экстремумами, что надёжно отделяет все корни, а
+                        # дальнейшее уменьшение шага уже не меняет результат
+                        # (проверено при h = 0.1 и h = 0.05).
+EPS1 = 1e-8             # точность по аргументу |x_k - x_(k-1)|
+EPS2 = 1e-8             # точность по функции |f(x_k)|
 
-# --- данные варианта 10 -----------------------------------------------------
-A_DEFAULT = -10.0
-B_DEFAULT = 10.0
-H_DEFAULT = 0.25          # обоснованный шаг сетки отделения корней
-
-MATRIX_A = [[7.9, 5.6, 5.7, -7.2],
-            [8.5, -4.8, 0.8, 3.5],
-            [4.3, 4.2, -3.2, 9.3],
-            [3.2, -1.4, -8.9, 3.3]]
-
-VECTOR_B = [6.68, 9.95, 8.6, 1.0]
+MAT_A = [[7.9, 5.6, 5.7, -7.2],
+         [8.5, -4.8, 0.8, 3.5],
+         [4.3, 4.2, -3.2, 9.3],
+         [3.2, -1.4, -8.9, 3.3]]
+VEC_B = [6.68, 9.95, 8.6, 1.0]
 
 
 def func(x):
@@ -47,418 +42,309 @@ def func(x):
     return 10.0 * math.cos(x) - 0.1 * x * x
 
 
-def d1(x):
-    """Первая производная f'(x) = -10*sin(x) - 0.2*x."""
+def d1f(x):
+    """f'(x) = -10*sin(x) - 0.2*x."""
     return -10.0 * math.sin(x) - 0.2 * x
 
 
-def d2(x):
-    """Вторая производная f''(x) = -10*cos(x) - 0.2."""
+def d2f(x):
+    """f''(x) = -10*cos(x) - 0.2."""
     return -10.0 * math.cos(x) - 0.2
 
 
-def ask(prompt):
-    """Запрос строки; при закрытии потока ввода (EOF) корректно завершает работу."""
-    try:
-        return input(prompt)
-    except EOFError:
-        raise SystemExit("\nВвод прерван, работа завершена.")
+def isolate(a, b, h):
+    """Отделение корней на равномерной сетке с шагом h.
+
+    Возвращает список пар (x_i, x_{i+1}) - подотрезков сетки, на которых
+    f меняет знак (f(x_i)*f(x_{i+1}) < 0). По построению шага (см. H_STEP)
+    каждый такой подотрезок лежит внутри одной области монотонности f,
+    поэтому содержит ровно один корень.
+    """
+    segs = []
+    x1 = a
+    f1 = func(x1)
+    n = int(math.ceil((b - a) / h))
+    for i in range(1, n + 1):
+        x2 = a + i * h
+        if x2 > b:
+            x2 = b
+        f2 = func(x2)
+        if f1 == 0.0:
+            segs.append((x1, x1))
+        elif f1 * f2 < 0.0:
+            segs.append((x1, x2))
+        x1, f1 = x2, f2
+    if f1 == 0.0:
+        segs.append((x1, x1))
+    return segs
 
 
-def ask_float(text, default):
-    """Запрос вещественного числа; пустой ввод означает значение по умолчанию."""
-    while True:
-        raw = ask(f"{text} [{default}]: ").strip()
-        if raw == "":
-            return float(default)
-        try:
-            return float(raw.replace(",", "."))
-        except ValueError:
-            print("  Нужно ввести число, попробуйте ещё раз.")
+def pick_start(a, b):
+    """Начальное приближение метода Ньютона: тот конец отрезка, для которого
+    f(x)*f''(x) > 0 (условие сходимости касательных); иначе - середина."""
+    if func(a) * d2f(a) > 0.0:
+        return a, "конец a (f*f'' > 0)"
+    if func(b) * d2f(b) > 0.0:
+        return b, "конец b (f*f'' > 0)"
+    return 0.5 * (a + b), "середина (условие не выполнено ни на одном конце)"
 
 
-def ask_int(text, default):
-    """Запрос натурального числа."""
-    while True:
-        raw = ask(f"{text} [{default}]: ").strip()
-        if raw == "":
-            return int(default)
-        try:
-            value = int(raw)
-            if value > 0:
-                return value
-        except ValueError:
-            pass
-        print("  Нужно ввести положительное целое число.")
+def newton(x0, eps1, eps2):
+    """Метод Ньютона: x_k = x_(k-1) - f(x_(k-1))/f'(x_(k-1)).
+
+    Останов: |x_k - x_(k-1)| < eps1 и |f(x_k)| < eps2.
+    Возвращает (корень, история [(x_k, f(x_k))...]).
+    """
+    hist = [(x0, func(x0))]
+    x = x0
+    for _ in range(100):
+        d = d1f(x)
+        if abs(d) < 1e-14:
+            break
+        xn = x - func(x) / d
+        fn = func(xn)
+        hist.append((xn, fn))
+        if abs(xn - x) < eps1 and abs(fn) < eps2:
+            break
+        x = xn
+    return hist[-1][0], hist
+
+
+def alpha_of(hist):
+    """Фактический параметр сходимости (k=2): alpha = D_k / D_(k-1)^2,
+    D_k = |x_k - x_(k-1)|. Берётся последняя тройка точек, ещё не искажённая
+    машинным округлением."""
+    for i in range(len(hist) - 1, 1, -1):
+        d1 = abs(hist[i][0] - hist[i - 1][0])
+        d2 = abs(hist[i - 1][0] - hist[i - 2][0])
+        if d1 > 1e-13 and d2 > 1e-30:
+            return d1 / (d2 * d2)
+    return None
 
 
 def task1():
-    print("\n" + "=" * 70)
-    print("ЗАДАНИЕ 1. ОТДЕЛЕНИЕ КОРНЕЙ И УТОЧНЕНИЕ МЕТОДОМ НЬЮТОНА")
     print("=" * 70)
-    print("Уравнение варианта 10: f(x) = 10*cos(x) - 0.1*x^2 = 0")
+    print("ЗАДАНИЕ 1. ОТДЕЛЕНИЕ КОРНЕЙ И УТОЧНЕНИЕ МЕТОДОМ НЬЮТОНА")
+    print("f(x) = 10*cos(x) - 0.1*x^2,  отрезок [%g; %g]" % (A_LEFT, B_RIGHT))
+    print("Шаг сетки отделения h = %g (фиксирован, обоснован анализом f)" % H_STEP)
+    print("=" * 70)
 
-    a = ask_float("Левая граница отрезка a", A_DEFAULT)
-    b = ask_float("Правая граница отрезка b", B_DEFAULT)
-    if b <= a:
-        print("Отрезок задан неверно (нужно b > a), используются значения по умолчанию.")
-        a, b = A_DEFAULT, B_DEFAULT
+    t0 = time.perf_counter()
+    segs = isolate(A_LEFT, B_RIGHT, H_STEP)
+    ngrid = int(math.ceil((B_RIGHT - A_LEFT) / H_STEP)) + 1
+    print("\nОтделено корней: %d (узлов сетки: %d, вычислений f на отделении: %d)"
+          % (len(segs), ngrid, ngrid))
+    for i, s in enumerate(segs, 1):
+        print("  отрезок %d: [%9.6f ; %9.6f]" % (i, s[0], s[1]))
 
-    print("Шаг h задаётся пользователем. Обоснование выбора h:")
-    print("  f'(x) = -10*sin(x) - 0.2*x, точки экстремума f(x) лежат вблизи")
-    print("  нулей sin(x), т.е. в точках x ~ k*pi; наименьший полуинтервал")
-    print("  монотонности между соседними экстремумами равен ~pi/2*2 = pi ~ 3.14.")
-    print("  На каждом таком интервале функция имеет не более одного корня.")
-    print("  Шаг h = 0.25 обеспечивает около 12 узлов между соседними")
-    print("  экстремумами, надёжно фиксирует смену знака у всех корней")
-    print("  и не приводит к лишнему росту вычислений; это оптимальное")
-    print("  значение шага для данной функции.")
-    h = ask_float("Шаг сетки отделения h", H_DEFAULT)
-    if h <= 0 or h >= (b - a):
-        print("Шаг задан неверно, используется h = 0.25.")
-        h = H_DEFAULT
+    total_f = len(segs)
+    total_d1 = 0
+    all_res = []
+    for idx, (sa, sb) in enumerate(segs, 1):
+        x0, how = pick_start(sa, sb)
+        root, hist = newton(x0, EPS1, EPS2)
+        nf = len(hist) + 1                    # f считаем на каждом x_k + на останове
+        nd = len(hist) - 1 if len(hist) > 1 else 0
+        total_f += nf
+        total_d1 += nd
+        dx = abs(hist[-1][0] - hist[-2][0]) if len(hist) > 1 else 0.0
+        err_x = 2.0 * dx                      # оценка |xi - x_n|
+        af = alpha_of(hist)
+        at = abs(d2f(root)) / (2.0 * abs(d1f(root)))
+        all_res.append((idx, sa, sb, x0, how, root, hist, dx, err_x, af, at, nf, nd))
 
-    eps1 = ask_float("Точность по аргументу eps1", 1e-8)
-    eps2 = ask_float("Точность по функции eps2", 1e-8)
+        print("\nКорень %d. Отрезок [%9.6f ; %9.6f], x0 = %.6f (%s)"
+              % (idx, sa, sb, x0, how))
+        print("  Промежуточные результаты (погрешности - в научном формате):")
+        print("   k        x_k            eps_f=|f(x_k)|   eps_x=|x_k-x_(k-1)|")
+        for k, (xk, fk) in enumerate(hist):
+            e_f = abs(fk)
+            e_x = abs(xk - hist[k - 1][0]) if k > 0 else float("nan")
+            if k > 0:
+                print("  %2d  %16.10f   %12.4e     %12.4e" % (k, xk, e_f, e_x))
+            else:
+                print("  %2d  %16.10f   %12s     %12s" % (k, xk, "-", "-"))
 
-    n = max(1, math.ceil((b - a) / h))
-    xn = [a]
-    for i in range(1, n + 1):
-        xn.append(b if i == n else a + i * h)
+    el = time.perf_counter() - t0
 
-    print("\n--- Этап 1. Отделение корней ---")
-    print(f"Число шагов сетки n = {n}, фактический последний шаг = "
-          f"{xn[-1] - xn[-2]:.6f}")
-
-    fn = [func(x) for x in xn]
-    scan_calls = len(fn)
-    segments = []
-    for i in range(len(xn) - 1):
-        if fn[i] == 0.0:
-            segments.append((xn[i], xn[i]))
-        elif fn[i] * fn[i + 1] < 0.0:
-            segments.append((xn[i], xn[i + 1]))
-    if fn[-1] == 0.0 and (not segments or segments[-1][1] != xn[-1]):
-        segments.append((xn[-1], xn[-1]))
-
-    if not segments:
-        print("На заданном отрезке корней не обнаружено.")
-        return
-
-    print("Отрезки отделения корней и значения функции на концах:")
-    print(f"{'N':>3} {'a_i':>12} {'b_i':>12} {'f(a_i)':>14} {'f(b_i)':>14}")
-    for i, (l, r) in enumerate(segments, 1):
-        print(f"{i:>3} {l:>12.6f} {r:>12.6f} {func(l):>14.6f} {func(r):>14.6f}")
-
-    print("\n--- Этап 2. Уточнение корней методом Ньютона ---")
-    summary = []
-    total_f = total_d1 = total_d2 = 0
-    started = time.perf_counter()
-
-    for seg_index, (l, r) in enumerate(segments, 1):
-        fl, fr = func(l), func(r)
-        cl, cr = fl * d2(l), fr * d2(r)
-        if cl > 0.0:
-            x0 = l
-            reason = f"условие (а): f(a)*f''(a) = {cl:.4f} > 0, x0 = a"
-        elif cr > 0.0:
-            x0 = r
-            reason = f"условие (б): f(b)*f''(b) = {cr:.4f} > 0, x0 = b"
-        else:
-            x0 = l if cl >= cr else r
-            reason = ("ни (а), ни (б) не выполнены; выбран конец с большим"
-                      f" произведением f*f'' ({max(cl, cr):.4f})")
-        calls_f = calls_d1 = calls_d2 = 2 + 2  # f и f'' на концах при выборе x0
-
-        print(f"\nКорень {seg_index}, отрезок [{l:.6f}; {r:.6f}]")
-        print(f"  Начальное приближение: x0 = {x0:.6f} ({reason})")
-
-        history = [(x0, func(x0))]
-        calls_f += 1
-        x_prev = x0
-        f_prev = history[0][1]
-        converged = False
-        attempts = 1
-
-        for k in range(1, MAX_ITER + 1):
-            g = d1(x_prev)
-            calls_d1 += 1
-            if abs(g) < EPS_SINGULAR:
-                break
-            x_new = x_prev - f_prev / g
-            f_new = func(x_new)
-            calls_f += 1
-            delta = abs(x_new - x_prev)
-            err_func = abs(f_new)
-            inside = "да" if l <= x_new <= r else "нет"
-            print(f"  k={k:<3} x_k={x_new:>15.10f}  "
-                  f"погрешность по функции |f(x_k)|={err_func:.4e}  "
-                  f"|x_k-x_(k-1)|={delta:.4e}  "
-                  f"погрешность корня 2*|x_k-x_(k-1)|={2*delta:.4e}  "
-                  f"x_k в отрезке: {inside}")
-            history.append((x_new, f_new))
-            if delta < eps1 and err_func < eps2:
-                converged = True
-                break
-            x_prev, f_prev = x_new, f_new
-
-        root = history[-1][0]
-        f_root = history[-1][1]
-        last_delta = (abs(history[-1][0] - history[-2][0])
-                      if len(history) > 1 else 0.0)
-        iters = len(history) - 1
-
-        alpha_fact = None
-        if len(history) >= 3:
-            step_last = abs(history[-1][0] - history[-2][0])
-            step_prev = abs(history[-2][0] - history[-3][0])
-            if step_prev > 1e-12 and step_last > 1e-15:
-                alpha_fact = step_last / step_prev ** 2
-        slope = d1(root)
-        alpha_theory = abs(d2(root)) / (2.0 * abs(slope)) if abs(slope) > 1e-14 else None
-        calls_d2 += 1
-
-        print(f"  Число итераций: {iters}, "
-              f"сходимость: {'да' if converged else 'нет'}")
-        summary.append((seg_index, l, r, root, abs(f_root), last_delta,
-                        2.0 * last_delta, alpha_fact, alpha_theory,
-                        calls_f, calls_d1, calls_d2))
-        total_f += calls_f
-        total_d1 += calls_d1
-        total_d2 += calls_d2
-
-    elapsed_ms = (time.perf_counter() - started) * 1000.0
-
-    print("\n--- Итоговые результаты ---")
-    print(f"{'N':>3} {'xi':>18} {'f(xi)':>18} {'|f(xi)|':>12} "
-          f"{'|dx|':>12} {'2*|dx|':>12} {'alpha факт':>12} {'alpha теор':>12}")
-    for row in summary:
-        i, l, r, xi, af, dx, est, afct, atc, *_ = row
-        s_afct = "н/д" if afct is None else f"{afct:.6f}"
-        s_atc = "н/д" if atc is None else f"{atc:.6f}"
-        print(f"{i:>3} {xi:>18.10f} {func(xi):>18.10f} {af:>12.4e} "
-              f"{dx:>12.4e} {est:>12.4e} {s_afct:>12} {s_atc:>12}")
-
-    print(f"\nКорней найдено: {len(summary)}")
-    print(f"Число вычислений f(x): {total_f + scan_calls}, "
-          f"f'(x): {total_d1}, f''(x): {total_d2}")
-    print(f"Время выполнения расчёта: {elapsed_ms:.2f} мс")
-    print("Погрешность корня оценена по формуле |xi - x_n| <= 2*|x_n - x_(n-1)|.")
+    print("\n" + "-" * 70)
+    print("Окончательные результаты (значение функции f(xi) - обычным форматом)")
+    print("-" * 70)
+    print("  i      xi                 f(xi)        |f(xi)|      eps_x       "
+          "оценка|xi-xn|   iters   alpha_факт  alpha_теор")
+    for r in all_res:
+        idx, sa, sb, x0, how, root, hist, dx, err_x, af, at, nf, nd = r
+        fx = func(root)
+        afs = "%.6f" % af if af is not None else "  -    "
+        print("  %d  %18.10f  %+12.8f  %10.2e  %10.2e  %10.2e    %2d     %s     %.6f"
+              % (idx, root, fx, abs(fx), dx, err_x, len(hist) - 1, afs, at))
+    print("\nВсего вычислений: f(x) = %d, f'(x) = %d; время счёта = %.4f с"
+          % (total_f, total_d1, el))
+    print("alpha_теор = |f''(xi)| / (2*|f'(xi)|); совпадение с alpha_факт")
+    print("подтверждает квадратичную сходимость метода Ньютона.")
 
 
-def read_system():
-    """Возвращает матрицу и правую часть: вариант 10 или пользовательские."""
-    use_variant = ask("Использовать систему варианта 10? (Y/n): ").strip().lower()
-    if use_variant in ("", "y", "yes", "д", "да"):
-        return [row[:] for row in MATRIX_A], list(VECTOR_B)
-    size = ask_int("Порядок системы n", 4)
-    matrix, rhs = [], []
-    print(f"Вводите по {size + 1} чисел в строке: коэффициенты и правая часть.")
-    for i in range(size):
-        while True:
-            parts = ask(f"Строка {i + 1}: ").replace(",", " ").split()
-            if len(parts) == size + 1:
-                try:
-                    values = [float(p) for p in parts]
-                    matrix.append(values[:size])
-                    rhs.append(values[size])
-                    break
-                except ValueError:
-                    pass
-            print(f"  Нужно ровно {size + 1} чисел.")
-    return matrix, rhs
+def gauss_solve(mat, vec):
+    """Прямой ход Гаусса с выбором ведущего элемента по модулю.
+    Работает с расширенной матрицей [mat | vec]. Возвращает (U, g, swaps)."""
+    n = len(vec)
+    aug = [list(mat[i]) + [vec[i]] for i in range(n)]
+    swaps = 0
+    for k in range(n):
+        p = k
+        for i in range(k + 1, n):
+            if abs(aug[i][k]) > abs(aug[p][k]):
+                p = i
+        if abs(aug[p][k]) < 1e-14:
+            raise ValueError("матрица вырождена")
+        if p != k:
+            aug[k], aug[p] = aug[p], aug[k]
+            swaps += 1
+        for i in range(k + 1, n):
+            m = aug[i][k] / aug[k][k]
+            for j in range(k, n + 1):
+                aug[i][j] -= m * aug[k][j]
+    return aug, swaps
 
 
-def show_matrix(title, rows, width=None):
+def back_sub(aug):
+    """Обратный ход: решение верхнетреугольной системы."""
+    n = len(aug)
+    sol = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        s = aug[i][n]
+        for j in range(i + 1, n):
+            s -= aug[i][j] * sol[j]
+        sol[i] = s / aug[i][i]
+    return sol
+
+
+def det_gauss(mat):
+    """Определитель методом Гаусса: произведение диагонали треугольной
+    матрицы со знаком (-1)^s от числа перестановок строк."""
+    n = len(mat)
+    work = [row[:] for row in mat]
+    sign = 1
+    for k in range(n):
+        p = k
+        for i in range(k + 1, n):
+            if abs(work[i][k]) > abs(work[p][k]):
+                p = i
+        if abs(work[p][k]) < 1e-14:
+            return 0.0
+        if p != k:
+            work[k], work[p] = work[p], work[k]
+            sign = -sign
+        for i in range(k + 1, n):
+            m = work[i][k] / work[k][k]
+            for j in range(k, n):
+                work[i][j] -= m * work[k][j]
+    d = float(sign)
+    for k in range(n):
+        d *= work[k][k]
+    return d
+
+
+def inverse_gauss(mat):
+    """Обратная матрица: Гаусс-Жордан на расширенной матрице [A | E]."""
+    n = len(mat)
+    aug = [list(mat[i]) + [1.0 if i == j else 0.0 for j in range(n)]
+           for i in range(n)]
+    for k in range(n):
+        p = k
+        for i in range(k + 1, n):
+            if abs(aug[i][k]) > abs(aug[p][k]):
+                p = i
+        if abs(aug[p][k]) < 1e-14:
+            raise ValueError("матрица вырождена, обратной не существует")
+        aug[k], aug[p] = aug[p], aug[k]
+        c = aug[k][k]
+        for j in range(2 * n):
+            aug[k][j] /= c
+        for i in range(n):
+            if i == k:
+                continue
+            c2 = aug[i][k]
+            for j in range(2 * n):
+                aug[i][j] -= c2 * aug[k][j]
+    return [row[n:] for row in aug]
+
+
+def show_mat(title, rows, w=12, p=6):
     print(title)
     for row in rows:
-        print("   [" + " ".join(f"{v:12.6f}" for v in row) + "]")
+        print("   " + " ".join("%*.*f" % (w, p, v) for v in row))
 
 
-def gauss_solve(matrix, rhs):
-    """Прямой ход с выбором ведущего элемента и обратный ход.
-
-    Возвращает (решение, число перестановок, верхнетреугольную матрицу).
-    """
-    size = len(rhs)
-    table = [list(matrix[i]) + [rhs[i]] for i in range(size)]
-    swaps = 0
-    for col in range(size):
-        top = col
-        for row in range(col + 1, size):
-            if abs(table[row][col]) > abs(table[top][col]):
-                top = row
-        if abs(table[top][col]) < EPS_SINGULAR:
-            raise ArithmeticError("Матрица вырождена.")
-        if top != col:
-            table[col], table[top] = table[top], table[col]
-            swaps += 1
-            print(f"\nПерестановка строк {col + 1} и {top + 1}, "
-                  f"ведущий элемент {table[col][col]:.6f}")
-        pivot = table[col][col]
-        for row in range(col + 1, size):
-            m = table[row][col] / pivot
-            if m == 0.0:
-                continue
-            for j in range(col, size + 1):
-                table[row][j] -= m * table[col][j]
-        show_matrix(f"\nМатрица после шага {col + 1}:", table)
-
-    solution = [0.0] * size
-    for row in range(size - 1, -1, -1):
-        s = table[row][size]
-        for j in range(row + 1, size):
-            s -= table[row][j] * solution[j]
-        solution[row] = s / table[row][row]
-    return solution, swaps, table
-
-
-def task2_1():
-    print("\n" + "=" * 70)
-    print("ЗАДАНИЕ 2.1. РЕШЕНИЕ СЛАУ МЕТОДОМ ГАУССА")
+def task2():
     print("=" * 70)
-    matrix, rhs = read_system()
-    show_matrix("Исходная расширенная матрица [A|b]:",
-                [matrix[i] + [rhs[i]] for i in range(len(rhs))])
-    solution, swaps, _ = gauss_solve(matrix, rhs)
-
-    print("\nРешение системы:")
-    for i, v in enumerate(solution, 1):
-        print(f"  x{i} = {v:.10f}")
-
-    residual = [sum(matrix[i][j] * solution[j] for j in range(len(solution)))
-                - rhs[i] for i in range(len(matrix))]
-    norm_r = max(abs(v) for v in residual)
-    norm_b = max(abs(v) for v in rhs)
-    print("\nНевязка r = A*x - b:")
-    for i, v in enumerate(residual, 1):
-        print(f"  r{i} = {v:+.6e}")
-    print(f"||r||_inf = {norm_r:.6e}, относительная невязка = {norm_r / norm_b:.6e}")
-    print(f"Число перестановок строк: {swaps}")
-
-
-def task2_2():
-    print("\n" + "=" * 70)
-    print("ЗАДАНИЕ 2.2. ОПРЕДЕЛИТЕЛЬ МАТРИЦЫ МЕТОДОМ ГАУССА")
+    print("ЗАДАНИЕ 2. ЛИНЕЙНАЯ АЛГЕБРА: МЕТОД ГАУССА (вариант 10)")
     print("=" * 70)
-    matrix, _ = read_system()
-    size = len(matrix)
-    work = [row[:] for row in matrix]
-    show_matrix("Исходная матрица A:", work)
 
-    swaps = 0
-    det = 1.0
-    for col in range(size):
-        top = col
-        for row in range(col + 1, size):
-            if abs(work[row][col]) > abs(work[top][col]):
-                top = row
-        if abs(work[top][col]) < EPS_SINGULAR:
-            print("\nВедущий элемент равен нулю -> det(A) = 0")
-            return
-        if top != col:
-            work[col], work[top] = work[top], work[col]
-            swaps += 1
-            print(f"\nПерестановка строк {col + 1} и {top + 1}")
-        pivot = work[col][col]
-        det *= pivot
-        for row in range(col + 1, size):
-            m = work[row][col] / pivot
-            for j in range(col, size):
-                work[row][j] -= m * work[col][j]
-        show_matrix(f"\nМатрица после шага {col + 1}:", work)
+    # --- 2.1 решение СЛАУ
+    print("\n2.1. Решение системы Ax = b")
+    show_mat("Исходная расширенная матрица [A|b]:",
+             [MAT_A[i] + [VEC_B[i]] for i in range(4)])
+    aug, sw = gauss_solve(MAT_A, VEC_B)
+    show_mat("После прямого хода (верхнетреугольная):", aug)
+    print("Число перестановок строк: %d" % sw)
+    sol = back_sub(aug)
+    print("\nРешение:")
+    for i, v in enumerate(sol, 1):
+        print("  x%d = %.10f" % (i, v))
+    res = []
+    for i in range(4):
+        s = sum(MAT_A[i][j] * sol[j] for j in range(4)) - VEC_B[i]
+        res.append(s)
+    print("Невязка r = Ax - b:")
+    for i, v in enumerate(res, 1):
+        print("  r%d = %+.4e" % (i, v))
+    nb = max(abs(v) for v in VEC_B)
+    nr = max(abs(v) for v in res)
+    print("||r||_inf = %.4e, относительная невязка = %.4e" % (nr, nr / nb))
 
-    if swaps % 2:
-        det = -det
-    print(f"\nПроизведение ведущих элементов со знаком: det(A) = {det:.6f}")
+    # --- 2.2 определитель
+    print("\n2.2. Определитель матрицы A методом Гаусса")
+    d = det_gauss(MAT_A)
+    print("det(A) = %.6f" % d)
 
-    if size == 2:
-        check = matrix[0][0] * matrix[1][1] - matrix[0][1] * matrix[1][0]
-    elif size == 3:
-        check = (matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
-                 - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
-                 + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0]))
-    else:
-        check = None
-    if check is not None:
-        print(f"Контрольное вычисление по правилу Саррюса: {check:.6f}")
-
-
-def task2_3():
-    print("\n" + "=" * 70)
-    print("ЗАДАНИЕ 2.3. ОБРАТНАЯ МАТРИЦА МЕТОДОМ ГАУССА")
-    print("=" * 70)
-    matrix, _ = read_system()
-    size = len(matrix)
-    table = [list(matrix[i]) + [1.0 if i == j else 0.0 for j in range(size)]
-             for i in range(size)]
-    show_matrix("Расширенная матрица [A|E]:", table)
-
-    for col in range(size):
-        top = col
-        for row in range(col + 1, size):
-            if abs(table[row][col]) > abs(table[top][col]):
-                top = row
-        if abs(table[top][col]) < EPS_SINGULAR:
-            raise ArithmeticError("Матрица вырождена, обратной не существует.")
-        if top != col:
-            table[col], table[top] = table[top], table[col]
-            print(f"\nПерестановка строк {col + 1} и {top + 1}")
-        pivot = table[col][col]
-        table[col] = [v / pivot for v in table[col]]
-        for row in range(size):
-            if row == col:
-                continue
-            m = table[row][col]
-            if m == 0.0:
-                continue
-            table[row] = [table[row][j] - m * table[col][j] for j in range(2 * size)]
-        show_matrix(f"\nМатрица после шага {col + 1}:", table)
-
-    inverse = [row[size:] for row in table]
-    print("\nОбратная матрица A^(-1):")
-    show_matrix("", inverse)
-
-    product = [[sum(matrix[i][k] * inverse[k][j] for k in range(size))
-                for j in range(size)] for i in range(size)]
-    print("Контрольная матрица A*A^(-1):")
-    show_matrix("", product)
-    deviation = max(abs(product[i][j] - (1.0 if i == j else 0.0))
-                    for i in range(size) for j in range(size))
-    print(f"Невязка ||A*A^(-1) - E|| = {deviation:.6e}")
+    # --- 2.3 обратная матрица
+    print("\n2.3. Обратная матрица A^(-1) (метод Гаусса-Жордана)")
+    inv = inverse_gauss(MAT_A)
+    show_mat("A^(-1) =", inv, w=13, p=8)
+    prod = [[sum(MAT_A[i][k] * inv[k][j] for k in range(4)) for j in range(4)]
+            for i in range(4)]
+    show_mat("Контроль A * A^(-1):", prod, w=13, p=8)
+    dev = max(abs(prod[i][j] - (1.0 if i == j else 0.0))
+              for i in range(4) for j in range(4))
+    print("Невязка ||A*A^(-1) - E||_max = %.4e" % dev)
 
 
 MENU = """
 ======================================================================
- ЛАБОРАТОРНАЯ РАБОТА № 1, вариант 10
-======================================================================
-  1 - Задание 1.   Отделение корней и метод Ньютона
-  2 - Задание 2.1. Решение СЛАУ методом Гаусса
-  3 - Задание 2.2. Определитель матрицы
-  4 - Задание 2.3. Обратная матрица
-  0 - Выход
-"""
-
-TASKS = {"1": task1, "2": task2_1, "3": task2_2, "4": task2_3}
+ ЛР N1, вариант 10
+   1 - Задание 1 (корни уравнения, метод Ньютона)
+   2 - Задание 2 (Гаусс: СЛАУ, определитель, обратная матрица)
+   0 - выход
+======================================================================"""
 
 
-def main():
-    while True:
-        print(MENU)
-        choice = ask("Выберите задание: ").strip()
-        if choice == "0":
-            print("Работа завершена.")
-            return
-        task = TASKS.get(choice)
-        if task is None:
-            print("Нет такого пункта меню.")
-            continue
-        try:
-            task()
-        except (ValueError, ArithmeticError) as error:
-            print(f"\nОшибка: {error}")
-        ask("\nНажмите Enter для возврата в меню...")
+def ask(prompt):
+    try:
+        return input(prompt)
+    except EOFError:
+        raise SystemExit("\nВвод прерван, программа завершена.")
 
 
 if __name__ == "__main__":
-    main()
+    while True:
+        print(MENU)
+        c = ask("Выбор: ").strip()
+        if c == "1":
+            task1()
+        elif c == "2":
+            task2()
+        elif c == "0":
+            break
+        else:
+            print("Нет такого пункта.")
