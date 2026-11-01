@@ -23,8 +23,6 @@
 Запуск:  python3 lr1.py
 """
 
-from __future__ import annotations
-
 import math
 import time
 
